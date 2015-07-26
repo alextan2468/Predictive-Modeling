@@ -1,0 +1,108 @@
+---
+title: "Predictive Modeling Project"
+author: "alextan2468"
+date: "Tuesday, July 21, 2015"
+output: html_document
+---
+
+##Executive Summary
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. The data came from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways (classe).  
+The objective of this project is to build a model to predict the classe of the lifts using the readings from the accelerometers.  
+Using both the training data partitioned for validation as well as actual test set, the author was able to demonstrate >=90% accuracy from this model built with PCA and Random Forest Approach.
+
+##Data Cleaning and Analysis
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+Download the data.
+```{r}
+# download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv","pml-training.csv")
+# download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv","pml-testing.csv")
+```
+
+Load the data and library and partition the training data set to training and testing
+```{r}
+#load library
+library(caret)
+#set seed
+set.seed(2324)
+#read the data and partition training data into training and testing sets
+alltraindata<-read.csv("pml-training.csv")
+inTrain<-createDataPartition(y=alltraindata$classe,p=0.75,list=FALSE)
+training<-alltraindata[inTrain,]
+testing<-alltraindata[-inTrain,]
+finaltestdata<-read.csv("pml-testing.csv")
+```
+  
+Preprocessing to remove the predictors mostly blanks or NAs and non-measurement variables like ID, timestamp etc. not useful for prediction.
+```{r}
+#list the cols of predictors that are lots of NA or blanks for excluding
+nonpredindex <- NULL
+for (n in 1:160) {
+  if (sum((alltraindata[,n]!="")&(!is.na(alltraindata[,n]))) < 10000) {
+    nonpredindex <- c(nonpredindex,n)
+  }
+}
+#subset the training and testing data that have good number of observation
+#After this step, there are no more missing or NA values
+alltraindata<-alltraindata[,-nonpredindex]
+testing<-testing[,-nonpredindex]
+training<-training[,-nonpredindex]
+finaltestdata<-finaltestdata[,-nonpredindex]
+#remove the 1st 7 columns which are indices, names etc which are not predictors we want, leaving 52 predictors
+alltraindata<-alltraindata[,-c(1:7)]
+testing<-testing[,-c(1:7)]
+training<-training[,-c(1:7)]
+finaltestdata<-finaltestdata[,-c(1:7)]
+```
+  
+Further processing is needed to reduce the number of predictors to speed up processing, we use PCA with default threshold and with standardization and BoxCox on the variables.
+```{r}
+preProc <- preProcess(training[,-53],method=c("BoxCox","pca","center","scale"))
+trainPC <- predict(preProc,training[,-53])
+testPC <- predict(preProc,testing[,-53])
+```
+
+The 52 predictors are reduced to 25 Principal Components.  
+Now we do cross validation for random forest with rfcv
+```{r}
+library(randomForest)
+cval <- rfcv(trainPC,training[,53])
+with(cval,plot(n.var,error.cv,lwd=2, xlab="No. of predictors", ylab="CV error rate"))
+cval$error.cv
+```
+  
+From the error rate plot, we see that the more the predictors, the lower the CV error rate. We need include all 25 Principal Components.  
+The out of sample error is ~3% based on the estimation with 25 PCS from above error.cv results.
+  
+```{r}
+modelfit<-train(training$classe~.,data=trainPC,method="rf")
+```
+  
+Next we do validation using the testPC, the principal components of the training set partitioned for testing.  
+
+```{r}
+confusionMatrix(predict(modelfit,testPC),testing$classe)
+```
+It is seen that the out of sample accuracy is ~98%.  
+Lastly, we do prediction for the final test data for submission.
+```{r}
+finaltestdataPC<- predict(preProc,finaltestdata[,-53])
+answer<-predict(modelfit,finaltestdataPC)
+```
+
+For purpose of submission, the text files are created.
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answer)
+```
+As expected the accuracy of this algorithm is close ~90% as evaluated by the 20 samples.  
+  
+##Summary  
+Principal components analysis was used to reduce predictors to ~25 and random forest was used as the classification prediction model. The accuracy is >90%. And this author was able to get a score of 18/20 in the 1st round submission based on the output of the model.
